@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "alert": {
+      "type": "boolean"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["none", "info", "low", "medium", "high", "critical"]
+    },
+    "title": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "suggested_action": {
+      "type": "string"
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "trend_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "false_positive_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "events_to_watch": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "alert",
+    "severity",
+    "title",
+    "summary",
+    "suggested_action",
+    "reasons",
+    "trend_notes",
+    "false_positive_notes",
+    "events_to_watch"
+  ]
+}

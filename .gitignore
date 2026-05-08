@@ -1,0 +1,30 @@
+# Local configuration
+config.json
+
+# Generated monitor state and evidence
+runs/
+state.json
+actions-taken.txt
+last-manual-test-marker.txt
+hourly-security-review-log.md
+
+# Codex and shell output captures
+*-stdout.txt
+*-stderr.txt
+*-output.txt
+interactive-*.txt
+codex-input.json
+codex-prompt.txt
+codex-analysis.json
+events.json
+run-summary.json
+alert.md
+
+# Archives and editor files
+*.zip
+*.7z
+*.tmp
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

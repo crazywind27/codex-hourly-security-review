@@ -1,0 +1,14 @@
+{
+  "ComputerLabel": "MY-WINDOWS-PC",
+  "WorkRoot": "",
+  "MonitorRoot": "",
+  "LogRoot": "",
+  "DriveLogPath": "",
+  "ActionLogPath": "",
+  "ResumePath": "",
+  "CanaryAccountName": "",
+  "CanaryAccountDescription": "configured canary account",
+  "SecurityProductName": "Windows Security",
+  "SecurityServicePattern": "WinDefend|mpssvc|Security Center|wscsvc|EventLog",
+  "SecurityProductServicePattern": "WinDefend|mpssvc|Security Center|wscsvc"
+}
