@@ -33,3 +33,7 @@ session.
 Because the scheduled task runs with highest privileges to read protected logs,
 install scripts and configuration under a path writable only by trusted users.
 By default, Codex is not launched from an elevated monitor process.
+
+The scheduled task does not use `ExecutionPolicy Bypass`. New workstations
+should use a script-capable PowerShell policy such as `RemoteSigned`, and script
+files downloaded from ZIP archives should be unblocked before installation.

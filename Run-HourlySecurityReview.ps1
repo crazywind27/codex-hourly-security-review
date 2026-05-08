@@ -635,41 +635,64 @@ function Add-CollectionIssue {
     Add-ActionLog "Telemetry collection issue. Severity=$Severity; Log=$LogName; Detail=$message"
 }
 
-try {
-    $securityEvents = Get-WinEvent -FilterHashtable @{ LogName = 'Security'; StartTime = $startLocal; Id = $securityIds } -ErrorAction Stop
-    if ($securityEvents) { $records += $securityEvents | ForEach-Object { Convert-Event $_ } }
-} catch {
-    Add-CollectionIssue -Severity 'high' -LogName 'Security' -Detail 'The monitor could not read the Security log, so account, audit, firewall, and process telemetry may be incomplete.' -Exception $_
+function Test-NoMatchingEventsFound {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    if (!$ErrorRecord) { return $false }
+    if ([string]$ErrorRecord.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { return $true }
+    return ([string]$ErrorRecord.Exception.Message -match 'No events were found that match the specified selection criteria')
+}
+
+function Read-MonitorEvents {
+    param(
+        [hashtable]$Filter,
+        [string]$Severity,
+        [string]$LogName,
+        [string]$IssueDetail
+    )
+
+    try {
+        $events = Get-WinEvent -FilterHashtable $Filter -ErrorAction Stop
+        if ($events) {
+            return @($events | ForEach-Object { Convert-Event $_ })
+        }
+    } catch {
+        if (Test-NoMatchingEventsFound $_) {
+            return @()
+        }
+        Add-CollectionIssue -Severity $Severity -LogName $LogName -Detail $IssueDetail -Exception $_
+    }
+    return @()
+}
+
+@(
+    @{
+        Filter = @{ LogName = 'Security'; StartTime = $startLocal; Id = $securityIds }
+        Severity = 'high'
+        LogName = 'Security'
+        IssueDetail = 'The monitor could not read the Security log, so account, audit, firewall, and process telemetry may be incomplete.'
+    },
+    @{
+        Filter = @{ LogName = 'System'; StartTime = $startLocal; Id = $systemTargetIds }
+        Severity = 'medium'
+        LogName = 'System'
+        IssueDetail = 'The monitor could not read targeted Service Control Manager events.'
+    }
+) | ForEach-Object {
+    $records += @(Read-MonitorEvents -Filter $_.Filter -Severity $_.Severity -LogName $_.LogName -IssueDetail $_.IssueDetail)
 }
 
 foreach ($logName in @('System','Application')) {
-    try {
-        $events = Get-WinEvent -FilterHashtable @{ LogName = $logName; StartTime = $startLocal; Level = 1,2 } -ErrorAction Stop
-        if ($events) { $records += $events | ForEach-Object { Convert-Event $_ } }
-    } catch {
-        Add-CollectionIssue -Severity 'medium' -LogName $logName -Detail "The monitor could not read $logName error and critical events." -Exception $_
-    }
-}
-
-try {
-    $events = Get-WinEvent -FilterHashtable @{ LogName = 'System'; StartTime = $startLocal; Id = $systemTargetIds } -ErrorAction Stop
-    if ($events) { $records += $events | ForEach-Object { Convert-Event $_ } }
-} catch {
-    Add-CollectionIssue -Severity 'medium' -LogName 'System' -Detail 'The monitor could not read targeted Service Control Manager events.' -Exception $_
+    $records += @(Read-MonitorEvents -Filter @{ LogName = $logName; StartTime = $startLocal; Level = 1,2 } -Severity 'medium' -LogName $logName -IssueDetail "The monitor could not read $logName error and critical events.")
 }
 
 foreach ($targetLog in @('Microsoft-Windows-TaskScheduler/Operational','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-WMI-Activity/Operational')) {
-    try {
-        $ids = switch ($targetLog) {
-            'Microsoft-Windows-TaskScheduler/Operational' { $taskSchedulerTargetIds }
-            'Microsoft-Windows-PowerShell/Operational' { $powershellTargetIds }
-            'Microsoft-Windows-WMI-Activity/Operational' { $wmiTargetIds }
-        }
-        $events = Get-WinEvent -FilterHashtable @{ LogName = $targetLog; StartTime = $startLocal; Id = $ids } -ErrorAction Stop
-        if ($events) { $records += $events | ForEach-Object { Convert-Event $_ } }
-    } catch {
-        Add-CollectionIssue -Severity 'medium' -LogName $targetLog -Detail "The monitor could not read $targetLog telemetry." -Exception $_
+    $ids = switch ($targetLog) {
+        'Microsoft-Windows-TaskScheduler/Operational' { $taskSchedulerTargetIds }
+        'Microsoft-Windows-PowerShell/Operational' { $powershellTargetIds }
+        'Microsoft-Windows-WMI-Activity/Operational' { $wmiTargetIds }
     }
+    $records += @(Read-MonitorEvents -Filter @{ LogName = $targetLog; StartTime = $startLocal; Id = $ids } -Severity 'medium' -LogName $targetLog -IssueDetail "The monitor could not read $targetLog telemetry.")
 }
 
 $records = @($records | Where-Object {

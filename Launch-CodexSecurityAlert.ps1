@@ -189,6 +189,26 @@ function Write-AlertPreview {
     Write-Host ''
 }
 
+function Write-AlertFallback {
+    param(
+        [string[]]$Messages,
+        [string]$AlertText,
+        [string]$DispositionCommand,
+        [ConsoleColor]$Color = 'Yellow'
+    )
+
+    foreach ($message in $Messages) {
+        Write-Host $message -ForegroundColor $Color
+    }
+    Write-Host ''
+    Write-Host $AlertText
+    Write-Host ''
+    Write-Host 'To ignore this alert after review, run:' -ForegroundColor Cyan
+    Write-Host $DispositionCommand -ForegroundColor White
+    Write-Host ''
+    Write-Host 'Leave this window open if you want to review the paths above.'
+}
+
 $alertText = if (Test-Path -LiteralPath $AlertPath) {
     Get-Content -LiteralPath $AlertPath -Raw
 } else {
@@ -208,6 +228,7 @@ $CanaryBoundary = if (![string]::IsNullOrWhiteSpace($CanaryAccountName)) {
 } else {
     "- No canary account is configured."
 }
+$DispositionCommand = 'powershell.exe -NoProfile -File "{0}" -AlertPath "{1}" -Decision Ignored -Reason "<why this alert can be ignored>" -ConfigPath "{2}"' -f $DispositionScript, $AlertPath, $ConfigPath
 
 $prompt = @"
 You are an interactive Codex security alert session for the user's Windows computer $ComputerLabel.
@@ -248,7 +269,7 @@ Important paths:
 - Alert disposition helper: $DispositionScript
 
 Disposition command pattern:
-powershell.exe -NoProfile -File "$DispositionScript" -AlertPath "$AlertPath" -Decision Ignored -Reason "<why this alert can be ignored>" -ConfigPath "$ConfigPath"
+$DispositionCommand
 
 Alert contents:
 $alertText
@@ -261,31 +282,21 @@ Write-Host ''
 
 $isElevated = Test-IsElevated
 if ($DisableRemoteCodexAnalysis) {
-    Write-Host 'Remote Codex alert sessions are disabled by config. Showing alert text instead.' -ForegroundColor Yellow
-    Write-Host ''
-    Write-Host $alertText
-    Write-Host ''
-    Write-Host 'Leave this window open if you want to review the paths above.'
+    Write-AlertFallback -Messages @('Remote Codex alert sessions are disabled by config. Showing alert text instead.') -AlertText $alertText -DispositionCommand $DispositionCommand
     return
 }
 
 if ($isElevated -and !$AllowCodexWhenElevated) {
-    Write-Host 'This alert launcher is running elevated, so Codex will not be started automatically.' -ForegroundColor Yellow
-    Write-Host 'Open a non-elevated PowerShell window and run Codex manually with the alert file if you want interactive analysis.' -ForegroundColor Yellow
-    Write-Host ''
-    Write-Host $alertText
-    Write-Host ''
-    Write-Host 'Leave this window open if you want to review the paths above.'
+    Write-AlertFallback -Messages @(
+        'This alert launcher is running elevated, so Codex will not be started automatically.',
+        'Open a non-elevated PowerShell window and run Codex manually with the alert file if you want interactive analysis.'
+    ) -AlertText $alertText -DispositionCommand $DispositionCommand
     return
 }
 
 $codex = Get-CodexCommand
 if (!$codex) {
-    Write-Host 'CodexCommandPath is not configured or was not found. Showing alert text instead.' -ForegroundColor Red
-    Write-Host ''
-    Write-Host $alertText
-    Write-Host ''
-    Write-Host 'Codex is unavailable; leave this window open if you want to review the paths above.'
+    Write-AlertFallback -Messages @('CodexCommandPath is not configured or was not found. Showing alert text instead.') -AlertText $alertText -DispositionCommand $DispositionCommand -Color Red
     return
 }
 

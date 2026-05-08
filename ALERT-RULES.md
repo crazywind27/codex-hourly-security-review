@@ -1,7 +1,7 @@
 # Codex Hourly Security Review Alert Rules
 
-Last updated: 2026-05-07 20:36:00 -07:00
-Alert launcher updated: 2026-05-07 20:42:30 -07:00
+Last updated: 2026-05-08
+Alert launcher updated: 2026-05-08
 
 These deterministic rules run before Codex analysis. High and critical
 deterministic findings override a Codex non-alert decision. Codex still reviews
@@ -17,8 +17,11 @@ The exact fingerprint preserves the specific evidence instance; the suppression
 key is intentionally broader so a known-benign finding can remain suppressed
 when event counts or volatile message fragments change between runs.
 
-When an alert opens, the monitor launches an interactive Codex session instead
-of a static text window.
+When an alert opens, the monitor shows a visible alert window. It launches an
+interactive Codex session only when remote Codex analysis is enabled, an
+absolute Codex command path is configured, and the current integrity level is
+allowed. Otherwise the alert window shows the alert text and the manual
+disposition command.
 
 ## Critical Rules
 

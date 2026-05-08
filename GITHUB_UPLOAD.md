@@ -37,3 +37,7 @@ tree, then use the same `git add`, `commit`, and `push` steps there.
 
 Each installed machine should create its own local `config.json` from
 `config.example.json`. Do not commit that file.
+
+On a new workstation, confirm Windows PowerShell can run local scripts before
+installing the scheduled task. If the repo was downloaded as a ZIP, unblock the
+PowerShell scripts first so `RemoteSigned` policy does not block them.

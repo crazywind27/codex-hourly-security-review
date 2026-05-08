@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 - 2026-05-08
+
+- Treat empty Windows event queries as normal empty telemetry instead of
+  creating `Telemetry unavailable` alerts.
+- Show the manual alert disposition command whenever Codex is disabled,
+  unavailable, or blocked by elevated-task safety settings.
+- Added install checks and docs for PowerShell execution policy and blocked
+  downloaded script files.
+- Changed the manual test marker so it is not filtered as monitor self-noise.
+- Clarified default deterministic alert behavior in the README and alert rules.
+
 ## 0.2.0 - 2026-05-08
 
 - Added finding fingerprints, suppression keys, per-run `findings.json`, and

@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$testText = "$Marker EncodedCommand DownloadString wevtutil cl vssadmin delete shadows - codex hourly security review test string only"
+$testText = "$Marker EncodedCommand DownloadString wevtutil cl vssadmin delete shadows - harmless scheduled monitor validation string only"
 $escapedTestText = $testText -replace "'", "''"
 $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("Write-Output '$escapedTestText'"))
 powershell.exe -NoProfile -EncodedCommand $encodedCommand

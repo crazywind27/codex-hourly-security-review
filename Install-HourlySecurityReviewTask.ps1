@@ -89,6 +89,45 @@ function Assert-PathNotBroadlyWritable {
     }
 }
 
+function Assert-PowerShellCanRunMonitor {
+    $policy = Get-ExecutionPolicy
+    if ($policy -eq 'Restricted') {
+        throw "Effective PowerShell execution policy is Restricted. The scheduled task does not use ExecutionPolicy Bypass; set a script-capable policy such as RemoteSigned for CurrentUser or LocalMachine before installing."
+    }
+
+    if ($policy -eq 'AllSigned') {
+        $signature = Get-AuthenticodeSignature -FilePath $MonitorScript -ErrorAction SilentlyContinue
+        if (!$signature -or $signature.Status -ne 'Valid') {
+            throw "Effective PowerShell execution policy is AllSigned, but '$MonitorScript' does not have a valid signature. Sign the monitor scripts or use a policy such as RemoteSigned before installing."
+        }
+    }
+
+    $scriptPaths = @(
+        $PSCommandPath,
+        $MonitorScript,
+        (Join-Path $MonitorRoot 'Launch-CodexSecurityAlert.ps1'),
+        (Join-Path $MonitorRoot 'Set-CodexAlertDisposition.ps1')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+    $blocked = New-Object System.Collections.ArrayList
+    foreach ($scriptPath in $scriptPaths) {
+        try {
+            $zoneStream = Get-Item -LiteralPath $scriptPath -Stream Zone.Identifier -ErrorAction SilentlyContinue
+            if ($zoneStream) {
+                [void]$blocked.Add($scriptPath)
+            }
+        } catch {
+            # Alternate data streams are not available on every filesystem.
+        }
+    }
+
+    if ($blocked.Count -gt 0) {
+        throw "One or more monitor scripts are marked as downloaded from the internet and may be blocked by RemoteSigned policy. Run Unblock-File for these paths before installing: $($blocked -join '; ')"
+    }
+}
+
+Assert-PowerShellCanRunMonitor
+
 if (!$SkipAclCheck) {
     Assert-PathNotBroadlyWritable -Path $MonitorRoot
     Assert-PathNotBroadlyWritable -Path $MonitorScript

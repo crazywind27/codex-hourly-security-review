@@ -1,8 +1,9 @@
 # Codex Hourly Security Review
 
-Windows scheduled-task monitor that uses the Codex CLI to review recent Windows
-event logs every hour, append a running Markdown log, and open an interactive
-Codex alert session when a finding should interrupt the user.
+Windows scheduled-task monitor that reviews recent Windows event logs every
+hour, appends a running Markdown log, and opens a visible alert window when a
+finding should interrupt the user. It can optionally use the Codex CLI for
+remote analysis and interactive alert triage.
 
 ## What It Does
 
@@ -14,8 +15,9 @@ Codex alert session when a finding should interrupt the user.
 - Optionally asks `codex exec` for a structured JSON triage decision when an
   absolute `CodexCommandPath` is configured and the process is not elevated.
 - Writes a durable Markdown trend log.
-- Opens a visible interactive `codex resume` session only when an alert is
-  warranted.
+- Opens a visible alert window when an alert is warranted. If remote Codex
+  analysis is configured and allowed for the current integrity level, the alert
+  window can launch an interactive `codex resume` session.
 - Records alert dispositions and user-approved ignore suppressions so matching
   known-benign findings can be tracked without repeatedly interrupting you.
 - Keeps per-run evidence locally under `runs/`.
@@ -74,7 +76,22 @@ Codex alert session when a finding should interrupt the user.
      have explicitly reviewed the local privilege risk of running Codex from a
      high-integrity scheduled task.
 
-4. Install the scheduled task from an elevated PowerShell prompt:
+4. On a new workstation, make sure Windows PowerShell can run local scripts.
+   The scheduled task intentionally does not use `ExecutionPolicy Bypass`.
+
+   ```powershell
+   Get-ExecutionPolicy
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```
+
+   If you downloaded the repo as a ZIP instead of cloning it with Git, unblock
+   the scripts before installing:
+
+   ```powershell
+   Get-ChildItem -Recurse -File -Filter *.ps1 | Unblock-File
+   ```
+
+5. Install the scheduled task from an elevated PowerShell prompt:
 
    ```powershell
    powershell.exe -NoProfile -File .\Install-HourlySecurityReviewTask.ps1
@@ -109,8 +126,11 @@ powershell.exe -NoProfile -File .\Test-Alert.ps1
 
 This writes a harmless PowerShell string containing IOC keywords, then starts
 the scheduled task. If PowerShell operational logging is enabled, the monitor
-should classify it as a high-severity test/false-positive alert and open the
-interactive Codex alert flow.
+should classify it as a high-severity test/false-positive alert and open a
+visible alert window. By default, an elevated task shows the alert text and the
+manual disposition command instead of starting Codex. If `CodexCommandPath` is
+configured and Codex is allowed for that process, the alert window can start the
+interactive Codex flow.
 
 ## Uninstall
 
@@ -149,9 +169,11 @@ deterministic-only local analysis.
 ## Alert Dispositions
 
 Each finding gets a precise fingerprint plus a broader suppression key, and each
-run writes `findings.json`. When an alert opens, the interactive Codex prompt
-includes a disposition command. After you explicitly say that an alert can be
-ignored or should not trigger again, Codex can run:
+run writes `findings.json`. When an alert opens, the visible alert window shows
+a disposition command. If an interactive Codex session is launched, its prompt
+includes the same command. After you explicitly decide that an alert can be
+ignored or should not trigger again, Codex can run this helper, or you can run it
+manually:
 
 ```powershell
 powershell.exe -NoProfile -File .\Set-CodexAlertDisposition.ps1 -AlertPath "<run>\alert.md" -Decision Ignored -Reason "<why this is known benign>"
