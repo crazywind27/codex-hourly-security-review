@@ -4,6 +4,7 @@ config.json
 # Generated monitor state and evidence
 runs/
 state.json
+alert-decisions.json
 actions-taken.txt
 last-manual-test-marker.txt
 hourly-security-review-log.md
@@ -18,6 +19,8 @@ codex-prompt.txt
 codex-analysis.json
 events.json
 run-summary.json
+findings.json
+alert-disposition.json
 alert.md
 
 # Archives and editor files

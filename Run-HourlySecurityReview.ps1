@@ -60,6 +60,8 @@ $CanaryAccountDescription = Get-ConfigValue -Config $Config -Name 'CanaryAccount
 $SecurityProductName = Get-ConfigValue -Config $Config -Name 'SecurityProductName' -Default 'security product'
 $SecurityServicePattern = Get-ConfigValue -Config $Config -Name 'SecurityServicePattern' -Default 'WinDefend|mpssvc|Security Center|wscsvc|EventLog'
 $SecurityProductServicePattern = Get-ConfigValue -Config $Config -Name 'SecurityProductServicePattern' -Default $SecurityServicePattern
+$AlertDecisionsPath = Get-ConfigValue -Config $Config -Name 'AlertDecisionsPath' -Default (Join-Path $MonitorRoot 'alert-decisions.json')
+$AllowCriticalAlertSuppressions = [bool](Get-ConfigValue -Config $Config -Name 'AllowCriticalAlertSuppressions' -Default $false)
 
 New-Item -ItemType Directory -Path $MonitorRoot, $RunsRoot, $DriveLogDir -Force | Out-Null
 
@@ -115,6 +117,147 @@ function Get-Hash {
     }
 }
 
+function Get-NormalizedFingerprintText {
+    param([string]$Text, [int]$Max = 900)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    $clean = Get-ShortMessage -Message $Text -Max $Max
+    $clean = $clean -replace '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', '<guid>'
+    $clean = $clean -replace '\b\d{8}-\d{6}\b', '<runstamp>'
+    $clean = $clean -replace '\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z| ?[+-]\d{2}:?\d{2})?\b', '<timestamp>'
+    $clean = $clean -replace '\b\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}:\d{2}\s*(?:AM|PM)?\b', '<timestamp>'
+    $clean = $clean -replace '\bRecordId\s*[:=]\s*\d+\b', 'RecordId=<id>'
+    $clean = $clean -replace '\bProcessId\s*[:=]\s*\d+\b', 'ProcessId=<pid>'
+    $clean = $clean -replace '\bPID\s*[:=]\s*\d+\b', 'PID=<pid>'
+    $clean = $clean -replace '\s+', ' '
+    return $clean.Trim()
+}
+
+function Get-SuspiciousTokenSummary {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    $tokens = New-Object System.Collections.Generic.List[string]
+    $checks = [ordered]@{
+        'encodedcommand' = '(?i)(encodedcommand|\s-enc\s)'
+        'base64' = '(?i)frombase64string'
+        'downloadstring' = '(?i)downloadstring'
+        'invoke-webrequest' = '(?i)(invoke-webrequest|\biwr\b)'
+        'invoke-expression' = '(?i)(invoke-expression|\biex\b)'
+        'execution-bypass' = '(?i)\s-bypass\b'
+        'hidden-window' = '(?i)(\s-windowstyle\s+hidden|\s-w\s+hidden)'
+        'regsvr32-http' = '(?i)regsvr32.+/i:http'
+        'mshta-http' = '(?i)mshta\s+http'
+        'rundll32-javascript' = '(?i)rundll32.+javascript'
+        'certutil-transfer' = '(?i)certutil.+(-urlcache|-decode)'
+        'bitsadmin-transfer' = '(?i)bitsadmin.+/transfer'
+        'wmic-process-create' = '(?i)wmic.+process.+call.+create'
+        'schtasks-create' = '(?i)schtasks.+/create'
+        'service-create' = '(?i)sc(\.exe)?\s+create'
+        'user-add' = '(?i)net(\.exe)?\s+user.+/add'
+        'admin-add' = '(?i)net(\.exe)?\s+localgroup.+administrators.+/add'
+        'shadow-delete' = '(?i)vssadmin.+delete.+shadows'
+        'backup-delete' = '(?i)wbadmin.+delete'
+        'recovery-disable' = '(?i)bcdedit.+recoveryenabled\s+no'
+        'eventlog-clear' = '(?i)wevtutil.+\scl\s'
+        'run-key' = '(?i)reg(\.exe)?\s+add.+\\(run|runonce)'
+        'defender-disable' = '(?i)set-mppreference.+disablerealtimemonitoring'
+        'defender-exclusion' = '(?i)add-mppreference.+exclusion'
+        'security-service-stop' = '(?i)(net(\.exe)?|sc(\.exe)?)\s+stop\s+(ekrn|efwd|mpssvc|windefend)'
+    }
+    foreach ($name in $checks.Keys) {
+        if ($Text -match $checks[$name]) {
+            $tokens.Add($name)
+        }
+    }
+    if ($tokens.Count -eq 0) { return '' }
+    return (@($tokens) | Sort-Object -Unique) -join ','
+}
+
+function Get-EventFingerprintSource {
+    param([object]$Event)
+    if ($null -eq $Event) { return '' }
+    $combinedText = @($Event.Message, $Event.CommandLine, $Event.TaskContent, $Event.ServiceFileName, $Event.NewProcessName, $Event.ParentProcessName) -join ' '
+    $suspiciousTokens = Get-SuspiciousTokenSummary -Text $combinedText
+    $textSummary = if (![string]::IsNullOrWhiteSpace($suspiciousTokens)) {
+        "tokens:$suspiciousTokens"
+    } else {
+        Get-NormalizedFingerprintText -Text $Event.Message -Max 500
+    }
+    $parts = @(
+        $Event.LogName,
+        $Event.ProviderName,
+        $Event.Id,
+        $Event.LevelDisplayName,
+        $Event.TargetUserName,
+        $Event.SubjectUserName,
+        $Event.IpAddress,
+        $Event.WorkstationName,
+        $Event.LogonType,
+        $Event.Status,
+        $Event.SubStatus,
+        $Event.ServiceName,
+        (Get-NormalizedFingerprintText -Text $Event.ServiceFileName -Max 500),
+        (Get-NormalizedFingerprintText -Text $Event.NewProcessName -Max 500),
+        (Get-NormalizedFingerprintText -Text $Event.ParentProcessName -Max 500),
+        (Get-NormalizedFingerprintText -Text $Event.CommandLine -Max 900),
+        $Event.TaskName,
+        (Get-NormalizedFingerprintText -Text $Event.TaskContent -Max 900),
+        $Event.ObjectName,
+        $Event.ShareName,
+        $Event.DestAddress,
+        $Event.DestPort,
+        $Event.SourceAddress,
+        $Event.SourcePort,
+        $textSummary
+    )
+    return (($parts | ForEach-Object { if ($null -eq $_) { '' } else { [string]$_ } }) -join '|')
+}
+
+function Get-FindingFingerprint {
+    param(
+        [string]$Severity,
+        [string]$Title,
+        [object[]]$RelatedEvents
+    )
+    $eventSources = @($RelatedEvents | ForEach-Object { Get-EventFingerprintSource -Event $_ } | Sort-Object -Unique)
+    $source = @($Severity, $Title, ($eventSources -join "`n")) -join "`n"
+    return Get-Hash -Text $source
+}
+
+function Get-FindingSuppressionKey {
+    param(
+        [string]$Severity,
+        [string]$Title,
+        [object[]]$RelatedEvents
+    )
+    $eventKeys = @($RelatedEvents | ForEach-Object {
+        @(
+            $_.LogName,
+            $_.ProviderName,
+            $_.Id,
+            $_.TargetUserName,
+            $_.SubjectUserName,
+            $_.IpAddress,
+            $_.WorkstationName,
+            $_.LogonType,
+            $_.Status,
+            $_.SubStatus,
+            $_.ServiceName,
+            (Get-NormalizedFingerprintText -Text $_.ServiceFileName -Max 300),
+            (Get-NormalizedFingerprintText -Text $_.NewProcessName -Max 300),
+            (Get-NormalizedFingerprintText -Text $_.ParentProcessName -Max 300),
+            $_.TaskName,
+            $_.ObjectName,
+            $_.ShareName,
+            $_.DestAddress,
+            $_.DestPort,
+            $_.SourceAddress,
+            $_.SourcePort
+        ) -join '|'
+    } | Sort-Object -Unique)
+    $source = @($Severity, $Title, ($eventKeys -join "`n")) -join "`n"
+    return Get-Hash -Text $source
+}
+
 function Convert-Event {
     param([System.Diagnostics.Eventing.Reader.EventRecord]$Event)
     $data = ConvertFrom-EventXml -Event $Event
@@ -160,11 +303,17 @@ function Add-Finding {
         [string]$SuggestedAction,
         [object[]]$RelatedEvents
     )
+    $fingerprint = Get-FindingFingerprint -Severity $Severity -Title $Title -RelatedEvents $RelatedEvents
+    $suppressionKey = Get-FindingSuppressionKey -Severity $Severity -Title $Title -RelatedEvents $RelatedEvents
     [void]$Findings.Add([pscustomobject]@{
+        Fingerprint      = $fingerprint
+        SuppressionKey   = $suppressionKey
         Severity        = $Severity
         Title           = $Title
         Detail          = $Detail
         SuggestedAction = $SuggestedAction
+        Suppressed      = $false
+        Suppression     = $null
         RelatedEvents   = @($RelatedEvents | Select-Object -First 8 | ForEach-Object {
             [pscustomobject]@{
                 TimeCreated = $_.TimeCreated
@@ -229,6 +378,138 @@ function Save-State {
         Fingerprints = $State.Fingerprints
     }
     $ordered | ConvertTo-Json -Depth 8 | Out-File -LiteralPath $StatePath -Encoding UTF8 -Width 240
+}
+
+function Set-ObjectProperty {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [object]$Value
+    )
+    if ($Object.PSObject.Properties.Name -contains $Name) {
+        $Object.$Name = $Value
+    } else {
+        Add-Member -InputObject $Object -NotePropertyName $Name -NotePropertyValue $Value -Force
+    }
+}
+
+function Load-AlertDecisions {
+    if (!(Test-Path -LiteralPath $AlertDecisionsPath)) {
+        return @{
+            Version = 1
+            Suppressions = @{}
+            Decisions = @()
+        }
+    }
+    try {
+        $raw = Get-Content -LiteralPath $AlertDecisionsPath -Raw | ConvertFrom-Json
+        $suppressions = @{}
+        foreach ($s in @($raw.Suppressions)) {
+            if ($s.Fingerprint) {
+                $suppressions[[string]$s.Fingerprint] = $s
+            }
+        }
+        return @{
+            Version = if ($raw.Version) { $raw.Version } else { 1 }
+            Suppressions = $suppressions
+            Decisions = @($raw.Decisions)
+        }
+    } catch {
+        Add-ActionLog "Could not parse alert decisions file '$AlertDecisionsPath'; ignoring suppressions for this run. $($_.Exception.Message)"
+        return @{
+            Version = 1
+            Suppressions = @{}
+            Decisions = @()
+        }
+    }
+}
+
+function Save-AlertDecisions {
+    param([hashtable]$AlertDecisions)
+    $dir = Split-Path -Parent $AlertDecisionsPath
+    if (![string]::IsNullOrWhiteSpace($dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $ordered = [ordered]@{
+        Version = 1
+        UpdatedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        Suppressions = @($AlertDecisions.Suppressions.Values | Sort-Object CreatedUtc, Fingerprint)
+        Decisions = @($AlertDecisions.Decisions)
+    }
+    $ordered | ConvertTo-Json -Depth 8 | Out-File -LiteralPath $AlertDecisionsPath -Encoding UTF8 -Width 240
+}
+
+function Get-ActiveSuppression {
+    param(
+        [object]$Finding,
+        [hashtable]$AlertDecisions,
+        [DateTime]$NowUtc
+    )
+    if ($null -eq $Finding -or [string]::IsNullOrWhiteSpace($Finding.Fingerprint)) { return $null }
+    $suppression = $null
+    $matchedBy = $null
+    if ($AlertDecisions.Suppressions.ContainsKey([string]$Finding.Fingerprint)) {
+        $suppression = $AlertDecisions.Suppressions[[string]$Finding.Fingerprint]
+        $matchedBy = 'fingerprint'
+    } elseif (![string]::IsNullOrWhiteSpace($Finding.SuppressionKey)) {
+        foreach ($candidate in @($AlertDecisions.Suppressions.Values)) {
+            if ($candidate.SuppressionKey -and [string]$candidate.SuppressionKey -eq [string]$Finding.SuppressionKey) {
+                $suppression = $candidate
+                $matchedBy = 'suppression_key'
+                break
+            }
+        }
+    }
+    if ($null -eq $suppression) { return $null }
+
+    $status = if ($suppression.Status) { [string]$suppression.Status } else { 'ignored' }
+    if ($status -notmatch '^(?i:ignored|active)$') { return $null }
+
+    if ($Finding.Severity -eq 'critical' -and !$AllowCriticalAlertSuppressions) { return $null }
+
+    if ($suppression.ExpiresUtc) {
+        try {
+            $expires = [DateTime]::Parse([string]$suppression.ExpiresUtc).ToUniversalTime()
+            if ($expires -le $NowUtc) { return $null }
+        } catch {
+            return $null
+        }
+    }
+    return [pscustomobject]@{
+        Suppression = $suppression
+        MatchedBy = $matchedBy
+    }
+}
+
+function Apply-AlertSuppressions {
+    param(
+        [object[]]$Findings,
+        [hashtable]$AlertDecisions,
+        [DateTime]$NowUtc
+    )
+    $updated = $false
+    foreach ($finding in @($Findings)) {
+        $match = Get-ActiveSuppression -Finding $finding -AlertDecisions $AlertDecisions -NowUtc $NowUtc
+        if ($null -eq $match) { continue }
+        $suppression = $match.Suppression
+
+        $finding.Suppressed = $true
+        $finding.Suppression = [pscustomobject]@{
+            Id = $suppression.Id
+            MatchedBy = $match.MatchedBy
+            Reason = $suppression.Reason
+            CreatedUtc = $suppression.CreatedUtc
+            ExpiresUtc = $suppression.ExpiresUtc
+        }
+
+        $matchCount = 0
+        if ($suppression.MatchCount) { $matchCount = [int]$suppression.MatchCount }
+        Set-ObjectProperty -Object $suppression -Name 'MatchCount' -Value ($matchCount + 1)
+        Set-ObjectProperty -Object $suppression -Name 'LastMatchedUtc' -Value $NowUtc.ToString('o')
+        Set-ObjectProperty -Object $suppression -Name 'LastMatchedRunFolder' -Value $RunDir
+        $updated = $true
+    }
+    return $updated
 }
 
 function Get-CodexPath {
@@ -551,6 +832,15 @@ foreach ($hash in $currentFingerprints.Keys) {
     }
 }
 
+$alertDecisions = Load-AlertDecisions
+$suppressionStateChanged = Apply-AlertSuppressions -Findings @($findings) -AlertDecisions $alertDecisions -NowUtc $nowUtc
+$activeFindings = @($findings | Where-Object { -not $_.Suppressed })
+$suppressedFindings = @($findings | Where-Object { $_.Suppressed })
+if ($suppressionStateChanged) {
+    Save-AlertDecisions -AlertDecisions $alertDecisions
+}
+@($findings) | ConvertTo-Json -Depth 8 | Out-File -LiteralPath (Join-Path $RunDir 'findings.json') -Encoding UTF8 -Width 240
+
 $topGroups = @($records | Group-Object LogName, ProviderName, Id, LevelDisplayName | Sort-Object Count -Descending | Select-Object -First 20 | ForEach-Object {
     $parts = $_.Name -split ', '
     [pscustomobject]@{
@@ -579,7 +869,8 @@ $codexInput = [ordered]@{
     }
     event_count = $records.Count
     top_groups = $topGroups
-    preliminary_findings = @($findings)
+    preliminary_findings = @($activeFindings)
+    suppressed_findings = @($suppressedFindings | Select-Object Fingerprint, SuppressionKey, Severity, Title, Detail, Suppression)
     recent_events = $recentForCodex
 }
 $inputJson = $codexInput | ConvertTo-Json -Depth 8
@@ -596,6 +887,8 @@ You are Codex running an hourly security and Windows event log review for this u
 You must not run commands or ask questions. Analyze only the JSON below.
 
 Decide whether the user should be interrupted with a visible alert window. Alert only for actionable security or system-health concerns. A repeated low-grade issue can become alert-worthy if trend data suggests it may otherwise be missed.
+
+Some findings may be listed as suppressed because the user previously marked matching alert fingerprints as ignored. Do not set alert=true solely because of a suppressed finding or its related events unless there is materially new evidence that is not covered by the suppression.
 
 Hard rules:
 - If a canary account is configured, any successful logon to it is critical and failed attempts are high severity.
@@ -631,11 +924,11 @@ $inputJson
 
 if ($null -eq $analysis) {
     $reason = if ($NoCodex) { 'Codex analysis was disabled for this run; using deterministic findings.' } else { 'Codex analysis was unavailable or returned invalid output; using deterministic findings.' }
-    $analysis = New-FallbackAnalysis -Findings @($findings) -Reason $reason
+    $analysis = New-FallbackAnalysis -Findings @($activeFindings) -Reason $reason
 }
 
 $maxFindingRank = 0
-foreach ($f in $findings) { $maxFindingRank = [Math]::Max($maxFindingRank, (Get-SeverityRank $f.Severity)) }
+foreach ($f in $activeFindings) { $maxFindingRank = [Math]::Max($maxFindingRank, (Get-SeverityRank $f.Severity)) }
 if ($ForceAlert) { $analysis.alert = $true }
 if ($maxFindingRank -ge 4 -and !$analysis.alert) {
     $analysis.alert = $true
@@ -643,10 +936,12 @@ if ($maxFindingRank -ge 4 -and !$analysis.alert) {
         $analysis.severity = if ($maxFindingRank -ge 5) { 'critical' } else { 'high' }
     }
 }
-if ([bool]$analysis.alert -and $findings.Count -gt 0 -and $analysis.title -match '(?i)no\s+(visible\s+)?(actionable\s+)?alert|no alert needed') {
-    $analysis.title = $findings[0].Title
-    $analysis.summary = "A deterministic alert rule fired: $($findings[0].Detail) Codex assessment: $($analysis.summary)"
+if ([bool]$analysis.alert -and $activeFindings.Count -gt 0 -and $analysis.title -match '(?i)no\s+(visible\s+)?(actionable\s+)?alert|no alert needed') {
+    $analysis.title = $activeFindings[0].Title
+    $analysis.summary = "A deterministic alert rule fired: $($activeFindings[0].Detail) Codex assessment: $($analysis.summary)"
 }
+
+$alertFingerprint = Get-Hash -Text ((@($activeFindings | ForEach-Object { $_.Fingerprint }) | Sort-Object) -join '|')
 
 $state.LastRunCompletedUtc = $nowUtc.ToString('o')
 Save-State -State $state
@@ -656,12 +951,16 @@ $runSummary = [ordered]@{
     run_completed_local = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss zzz')
     window_start_local = $startLocal.ToString('yyyy-MM-dd HH:mm:ss zzz')
     event_count = $records.Count
-    preliminary_finding_count = $findings.Count
+    preliminary_finding_count = $activeFindings.Count
+    total_finding_count = $findings.Count
+    suppressed_finding_count = $suppressedFindings.Count
     alert = [bool]$analysis.alert
     severity = $analysis.severity
     title = $analysis.title
     summary = $analysis.summary
     suggested_action = $analysis.suggested_action
+    alert_fingerprint = $alertFingerprint
+    alert_decisions_path = $AlertDecisionsPath
     run_folder = $RunDir
     codex_exit = $codexExit
 }
@@ -678,8 +977,10 @@ $entry.Add("## $($runSummary.run_completed_local) - $($analysis.severity.ToStrin
 $entry.Add('')
 $entry.Add("- Window: $($runSummary.window_start_local) to $($runSummary.run_completed_local)")
 $entry.Add("- Events reviewed: $($records.Count)")
-$entry.Add("- Preliminary findings: $($findings.Count)")
+$entry.Add("- Active findings: $($activeFindings.Count)")
+$entry.Add("- Suppressed findings: $($suppressedFindings.Count)")
 $entry.Add("- Run folder: ``$RunDir``")
+$entry.Add("- Alert fingerprint: ``$alertFingerprint``")
 $entry.Add('')
 $entry.Add("Summary: $($analysis.summary)")
 $entry.Add('')
@@ -737,15 +1038,37 @@ if ($falsePositive.Count -gt 0) {
     foreach ($r in $falsePositive) { $alertLines.Add("- $r") }
     $alertLines.Add('')
 }
+$alertLines.Add("## Alert Handling")
+$alertLines.Add(('- Alert fingerprint: `{0}`' -f $alertFingerprint))
+$alertLines.Add(('- Alert decisions file: `{0}`' -f $AlertDecisionsPath))
+$alertLines.Add('')
+if ($activeFindings.Count -gt 0) {
+    $alertLines.Add('Active finding fingerprints:')
+    foreach ($f in $activeFindings) {
+        $alertLines.Add(('- `{0}` - {1} - {2}' -f $f.Fingerprint, $f.Severity, $f.Title))
+        $alertLines.Add(('  Suppression key: `{0}`' -f $f.SuppressionKey))
+    }
+    $alertLines.Add('')
+}
+if ($suppressedFindings.Count -gt 0) {
+    $alertLines.Add('Suppressed finding fingerprints:')
+    foreach ($f in $suppressedFindings) {
+        $reason = if ($f.Suppression -and $f.Suppression.Reason) { $f.Suppression.Reason } else { 'previously ignored' }
+        $alertLines.Add(('- `{0}` - {1} - {2} ({3})' -f $f.Fingerprint, $f.Severity, $f.Title, $reason))
+        $alertLines.Add(('  Suppression key: `{0}`' -f $f.SuppressionKey))
+    }
+    $alertLines.Add('')
+}
 $alertLines.Add("## Evidence")
 $alertLines.Add(('- Run folder: `{0}`' -f $RunDir))
 $alertLines.Add(('- Drive log: `{0}`' -f $DriveLog))
+$alertLines.Add(('- Findings: `{0}`' -f (Join-Path $RunDir 'findings.json')))
 $alertLines | Out-File -LiteralPath $alertPath -Encoding UTF8 -Width 240
 
 if ([bool]$analysis.alert -and !$NoAlertWindow) {
     Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$AlertScript`"",'-AlertPath',"`"$alertPath`"","-ConfigPath","`"$ConfigPath`"") -WindowStyle Normal
 }
 
-Add-ActionLog "Hourly security review completed. Alert=$($analysis.alert); severity=$($analysis.severity); events=$($records.Count); run folder=$RunDir."
+Add-ActionLog "Hourly security review completed. Alert=$($analysis.alert); severity=$($analysis.severity); events=$($records.Count); active findings=$($activeFindings.Count); suppressed findings=$($suppressedFindings.Count); run folder=$RunDir."
 
-Write-Output "Alert=$($analysis.alert); Severity=$($analysis.severity); Events=$($records.Count); Run=$RunDir"
+Write-Output "Alert=$($analysis.alert); Severity=$($analysis.severity); Events=$($records.Count); ActiveFindings=$($activeFindings.Count); SuppressedFindings=$($suppressedFindings.Count); Run=$RunDir"

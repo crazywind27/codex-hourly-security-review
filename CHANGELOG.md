@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0 - 2026-05-08
+
+- Added finding fingerprints, suppression keys, per-run `findings.json`, and
+  alert fingerprints.
+- Added `Set-CodexAlertDisposition.ps1` for acknowledged, investigating,
+  resolved, and ignored alert decisions.
+- Added ignored-finding suppressions through `alert-decisions.json` so matching
+  non-critical findings are tracked without forcing repeated visible alerts.
+- Updated the interactive alert prompt to tell Codex how to record a user-
+  approved ignore disposition.
+
 ## 0.1.0 - 2026-05-07
 
 - Initial GitHub-ready package.

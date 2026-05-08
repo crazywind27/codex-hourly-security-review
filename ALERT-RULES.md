@@ -8,6 +8,15 @@ deterministic findings override a Codex non-alert decision. Codex still reviews
 the collected data to decide whether medium/low trends should interrupt the
 owner.
 
+Findings are assigned stable fingerprints and suppression keys. If the user
+explicitly records an alert disposition with `Decision Ignored`, future matching
+non-critical findings are still written to run evidence and the Markdown log as
+suppressed, but they do not force a visible alert. Critical findings are not
+suppressed unless local configuration explicitly enables critical suppressions.
+The exact fingerprint preserves the specific evidence instance; the suppression
+key is intentionally broader so a known-benign finding can remain suppressed
+when event counts or volatile message fragments change between runs.
+
 When an alert opens, the monitor launches an interactive Codex session instead
 of a static text window.
 

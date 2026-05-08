@@ -50,6 +50,8 @@ $DriveLog = Get-ConfigValue -Config $Config -Name 'DriveLogPath' -Default (Join-
 $RulesPath = Join-Path $MonitorRoot 'ALERT-RULES.md'
 $ReadmePath = Join-Path $MonitorRoot 'README.md'
 $ResumePath = Get-ConfigValue -Config $Config -Name 'ResumePath' -Default ''
+$AlertDecisionsPath = Get-ConfigValue -Config $Config -Name 'AlertDecisionsPath' -Default (Join-Path $MonitorRoot 'alert-decisions.json')
+$DispositionScript = Join-Path $MonitorRoot 'Set-CodexAlertDisposition.ps1'
 $ComputerLabel = Get-ConfigValue -Config $Config -Name 'ComputerLabel' -Default $env:COMPUTERNAME
 $CanaryAccountName = Get-ConfigValue -Config $Config -Name 'CanaryAccountName' -Default ''
 $CanaryAccountDescription = Get-ConfigValue -Config $Config -Name 'CanaryAccountDescription' -Default 'configured canary account'
@@ -231,6 +233,9 @@ Then wait for the user's instructions. Do not ask the user to resend alert detai
 Operating boundaries:
 - Do not change system settings, accounts, firewall/audit policy, security software, apps, files, or scheduled tasks unless the user explicitly approves that change in this interactive session.
 - You may inspect local evidence files if the user asks.
+- If the user explicitly says this alert can be ignored, is a known false positive, or should not trigger again, record that disposition by running the disposition helper below with Decision Ignored and a concise Reason. This only writes the local alert decisions file and is allowed after that explicit user instruction.
+- If the user only acknowledges, investigates, or resolves the alert without asking to suppress future repeats, run the same helper with Decision Acknowledged, Investigating, or Resolved instead of Ignored.
+- Do not suppress critical findings unless the local monitor configuration explicitly allows critical suppressions.
 $CanaryBoundary
 
 Important paths:
@@ -240,6 +245,11 @@ Important paths:
 - Alert rules: $RulesPath
 - Monitor README: $ReadmePath
 - Maintenance resume: $ResumePath
+- Alert decisions file: $AlertDecisionsPath
+- Alert disposition helper: $DispositionScript
+
+Disposition command pattern:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$DispositionScript" -AlertPath "$AlertPath" -Decision Ignored -Reason "<why this alert can be ignored>" -ConfigPath "$ConfigPath"
 
 Alert contents:
 $alertText

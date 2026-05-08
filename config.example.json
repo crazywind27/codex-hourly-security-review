@@ -5,6 +5,8 @@
   "LogRoot": "",
   "DriveLogPath": "",
   "ActionLogPath": "",
+  "AlertDecisionsPath": "",
+  "AllowCriticalAlertSuppressions": false,
   "ResumePath": "",
   "CanaryAccountName": "",
   "CanaryAccountDescription": "configured canary account",

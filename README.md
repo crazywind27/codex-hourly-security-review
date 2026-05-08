@@ -15,6 +15,8 @@ Codex alert session when a finding should interrupt the user.
 - Writes a durable Markdown trend log.
 - Opens a visible interactive `codex resume` session only when an alert is
   warranted.
+- Records alert dispositions and user-approved ignore suppressions so matching
+  known-benign findings can be tracked without repeatedly interrupting you.
 - Keeps per-run evidence locally under `runs/`.
 
 ## Requirements
@@ -24,6 +26,9 @@ Codex alert session when a finding should interrupt the user.
   scheduled task.
 - Permission to read the Windows Security log. The installer creates the task
   with highest privileges for the current interactive user.
+- A stable install folder whose scripts are writable only by trusted users.
+  Because the scheduled task runs with highest privileges, do not install this
+  in a directory that untrusted local users can modify.
 - Recommended: process command-line auditing plus PowerShell script block/module
   logging, so the IOC rules have useful telemetry.
 
@@ -49,6 +54,12 @@ Codex alert session when a finding should interrupt the user.
    - `DriveLogPath`: leave empty to use Documents, or set a Markdown log
      destination. This can be a Google Drive, OneDrive, Dropbox, or local
      Documents path.
+   - `AlertDecisionsPath`: leave empty to store alert decisions in the repo
+     folder, or set an absolute path for the local disposition/suppression
+     record.
+   - `AllowCriticalAlertSuppressions`: defaults to `false`; leave it that way
+     unless you intentionally want ignored critical findings to suppress future
+     alerts.
    - `CanaryAccountName`: optional account name that should never normally log
      in. Leave empty to disable canary-account rules.
    - `SecurityProductName` and service patterns: your AV/security product and
@@ -62,6 +73,20 @@ Codex alert session when a finding should interrupt the user.
 
 The task runs hourly as the current interactive user. Routine task windows are
 hidden. Alert windows are visible and interactive.
+
+## Upgrade
+
+To upgrade an existing installation, stop or wait for any current run to finish,
+copy the new repository files over the installed script folder, keep the local
+`config.json`, then rerun the installer if the scheduled-task action needs to be
+refreshed:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-HourlySecurityReviewTask.ps1
+```
+
+Generated evidence, `state.json`, `alert-decisions.json`, and `config.json`
+should remain local to each installed machine.
 
 ## Test
 
@@ -89,6 +114,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Uninstall-HourlySecuri
   alert session.
 - `Install-HourlySecurityReviewTask.ps1`: creates the hourly scheduled task.
 - `Uninstall-HourlySecurityReviewTask.ps1`: removes the scheduled task.
+- `Set-CodexAlertDisposition.ps1`: records alert decisions and ignored-finding
+  suppressions.
 - `Test-Alert.ps1`: harmless manual alert test.
 - `ALERT-RULES.md`: deterministic rule inventory.
 - `codex-security-review.schema.json`: JSON schema for Codex analysis output.
@@ -96,10 +123,34 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Uninstall-HourlySecuri
 
 ## Privacy
 
-Do not commit `config.json`, `runs/`, `state.json`, `actions-taken.txt`, or
-generated log files. They may contain user names, host names, local paths,
-commands, event log records, and alert evidence. The included `.gitignore`
-excludes those files by default.
+Do not commit `config.json`, `runs/`, `state.json`, `alert-decisions.json`,
+`actions-taken.txt`, or generated log files. They may contain user names, host
+names, local paths, commands, event log records, alert evidence, and local
+disposition notes. The included `.gitignore` excludes those files by default.
+
+## Alert Dispositions
+
+Each finding gets a precise fingerprint plus a broader suppression key, and each
+run writes `findings.json`. When an alert opens, the interactive Codex prompt
+includes a disposition command. After you explicitly say that an alert can be
+ignored or should not trigger again, Codex can run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Set-CodexAlertDisposition.ps1 -AlertPath "<run>\alert.md" -Decision Ignored -Reason "<why this is known benign>"
+```
+
+That writes `alert-decisions.json`. Future runs still record matching findings
+in `findings.json` and the Markdown log as suppressed, but matching non-critical
+findings no longer force a visible alert. Matching uses the exact fingerprint
+first, then the suppression key so repeated instances of the same alert category
+can be handled even when event counts change. Use `Acknowledged`,
+`Investigating`, or `Resolved` when you want an audit trail without suppressing
+future matches.
+
+The disposition file is intentionally simple JSON. To stop suppressing a finding,
+edit `alert-decisions.json` and change that suppression's `Status` from
+`ignored` to `resolved` or remove the suppression entry. Keep the decision
+history if you want a durable audit trail.
 
 ## License
 

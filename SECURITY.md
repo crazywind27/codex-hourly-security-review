@@ -1,13 +1,14 @@
 # Security Policy
 
 This project processes local Windows event log data. Treat generated run folders,
-state files, alert files, and Markdown logs as sensitive.
+state files, alert files, alert decisions, and Markdown logs as sensitive.
 
 ## Do Not Share
 
 - `config.json`
 - `runs/`
 - `state.json`
+- `alert-decisions.json`
 - `actions-taken.txt`
 - Generated alert, prompt, stdout, stderr, and event JSON files
 
