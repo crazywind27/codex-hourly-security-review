@@ -11,7 +11,8 @@ Codex alert session when a finding should interrupt the user.
 - Applies deterministic rules for common indicators of compromise, persistence,
   audit tampering, account changes, security-service issues, canary-account
   activity, and recurring system-health trends.
-- Asks `codex exec` for a structured JSON triage decision.
+- Optionally asks `codex exec` for a structured JSON triage decision when an
+  absolute `CodexCommandPath` is configured and the process is not elevated.
 - Writes a durable Markdown trend log.
 - Opens a visible interactive `codex resume` session only when an alert is
   warranted.
@@ -22,8 +23,9 @@ Codex alert session when a finding should interrupt the user.
 ## Requirements
 
 - Windows 10/11 with PowerShell 5.1 or later.
-- OpenAI Codex CLI installed and authenticated for the user that will run the
-  scheduled task.
+- Optional: OpenAI Codex CLI installed and authenticated for the user who will
+  run non-elevated analysis. Deterministic alerting works without remote Codex
+  analysis.
 - Permission to read the Windows Security log. The installer creates the task
   with highest privileges for the current interactive user.
 - A stable install folder whose scripts are writable only by trusted users.
@@ -65,14 +67,23 @@ Codex alert session when a finding should interrupt the user.
    - `SecurityProductName` and service patterns: your AV/security product and
      related Windows services.
 
+   - `CodexCommandPath`: absolute path to `codex.cmd` or `codex.exe` if you want
+     remote Codex analysis. Leave empty for deterministic-only mode.
+   - `DisableRemoteCodexAnalysis`: set `true` to force deterministic-only mode.
+   - `AllowCodexWhenElevated`: defaults to `false`. Leave it disabled unless you
+     have explicitly reviewed the local privilege risk of running Codex from a
+     high-integrity scheduled task.
+
 4. Install the scheduled task from an elevated PowerShell prompt:
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-HourlySecurityReviewTask.ps1
+   powershell.exe -NoProfile -File .\Install-HourlySecurityReviewTask.ps1
    ```
 
-The task runs hourly as the current interactive user. Routine task windows are
-hidden. Alert windows are visible and interactive.
+The task runs hourly as the current interactive user with highest privileges so
+it can read protected Windows logs. Routine task windows are hidden. Alert
+windows are visible. By default, the elevated task does not start Codex; it uses
+deterministic findings and displays alert context instead.
 
 ## Upgrade
 
@@ -82,7 +93,7 @@ copy the new repository files over the installed script folder, keep the local
 refreshed:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-HourlySecurityReviewTask.ps1
+powershell.exe -NoProfile -File .\Install-HourlySecurityReviewTask.ps1
 ```
 
 Generated evidence, `state.json`, `alert-decisions.json`, and `config.json`
@@ -93,7 +104,7 @@ should remain local to each installed machine.
 After installation, run:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Alert.ps1
+powershell.exe -NoProfile -File .\Test-Alert.ps1
 ```
 
 This writes a harmless PowerShell string containing IOC keywords, then starts
@@ -104,7 +115,7 @@ interactive Codex alert flow.
 ## Uninstall
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Uninstall-HourlySecurityReviewTask.ps1
+powershell.exe -NoProfile -File .\Uninstall-HourlySecurityReviewTask.ps1
 ```
 
 ## Files
@@ -128,6 +139,13 @@ Do not commit `config.json`, `runs/`, `state.json`, `alert-decisions.json`,
 names, local paths, commands, event log records, alert evidence, and local
 disposition notes. The included `.gitignore` excludes those files by default.
 
+If remote Codex analysis is enabled, selected Windows event-log-derived data is
+sent to Codex/OpenAI for triage. That data can include usernames, hostnames, IP
+addresses, local paths, command lines, process names, service names, scheduled
+task names/content, event messages, and alert evidence. Set
+`DisableRemoteCodexAnalysis` to `true` or leave `CodexCommandPath` empty for
+deterministic-only local analysis.
+
 ## Alert Dispositions
 
 Each finding gets a precise fingerprint plus a broader suppression key, and each
@@ -136,7 +154,7 @@ includes a disposition command. After you explicitly say that an alert can be
 ignored or should not trigger again, Codex can run:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Set-CodexAlertDisposition.ps1 -AlertPath "<run>\alert.md" -Decision Ignored -Reason "<why this is known benign>"
+powershell.exe -NoProfile -File .\Set-CodexAlertDisposition.ps1 -AlertPath "<run>\alert.md" -Decision Ignored -Reason "<why this is known benign>"
 ```
 
 That writes `alert-decisions.json`. Future runs still record matching findings
@@ -161,7 +179,10 @@ acceptable.
 ## Safety Model
 
 The scheduled review is read-only against Windows logs. It writes local evidence
-and Markdown summaries, then opens an interactive alert session. The alert
-session prompt tells Codex not to change system settings, accounts, firewall or
-audit policy, security software, apps, files, or scheduled tasks unless the user
-explicitly approves that change in the interactive session.
+and Markdown summaries, then opens an alert window when needed. Remote Codex
+analysis is opt-in through an absolute `CodexCommandPath` and is skipped by
+default when the monitor is elevated. Event-log text is treated as untrusted
+telemetry, not as instructions. The alert session prompt tells Codex not to
+change system settings, accounts, firewall or audit policy, security software,
+apps, files, or scheduled tasks unless the user explicitly approves that change
+in the interactive session.

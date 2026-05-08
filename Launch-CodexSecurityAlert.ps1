@@ -52,18 +52,45 @@ $ReadmePath = Join-Path $MonitorRoot 'README.md'
 $ResumePath = Get-ConfigValue -Config $Config -Name 'ResumePath' -Default ''
 $AlertDecisionsPath = Get-ConfigValue -Config $Config -Name 'AlertDecisionsPath' -Default (Join-Path $MonitorRoot 'alert-decisions.json')
 $DispositionScript = Join-Path $MonitorRoot 'Set-CodexAlertDisposition.ps1'
+$CodexCommandPath = [string](Get-ConfigValue -Config $Config -Name 'CodexCommandPath' -Default '')
+$DisableRemoteCodexAnalysis = [bool](Get-ConfigValue -Config $Config -Name 'DisableRemoteCodexAnalysis' -Default $false)
+$AllowCodexWhenElevated = [bool](Get-ConfigValue -Config $Config -Name 'AllowCodexWhenElevated' -Default $false)
 $ComputerLabel = Get-ConfigValue -Config $Config -Name 'ComputerLabel' -Default $env:COMPUTERNAME
 $CanaryAccountName = Get-ConfigValue -Config $Config -Name 'CanaryAccountName' -Default ''
 $CanaryAccountDescription = Get-ConfigValue -Config $Config -Name 'CanaryAccountDescription' -Default 'configured canary account'
 $Host.UI.RawUI.WindowTitle = "Codex Security Alert - $ComputerLabel"
 $RunFolder = Split-Path -Parent $AlertPath
 
+function Test-IsElevated {
+    try {
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+        return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        return $false
+    }
+}
+
 function Get-CodexCommand {
-    $cmd = Get-Command codex.cmd -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    $cmd = Get-Command codex -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    return $null
+    if ([string]::IsNullOrWhiteSpace($CodexCommandPath)) {
+        return $null
+    }
+    if (![System.IO.Path]::IsPathRooted($CodexCommandPath)) {
+        Write-Host "CodexCommandPath is not absolute: $CodexCommandPath" -ForegroundColor Yellow
+        return $null
+    }
+    try {
+        $resolved = Resolve-Path -LiteralPath $CodexCommandPath -ErrorAction Stop | Select-Object -First 1
+        $item = Get-Item -LiteralPath $resolved.Path -ErrorAction Stop
+        if ($item.PSIsContainer) {
+            Write-Host "CodexCommandPath points to a directory: $($item.FullName)" -ForegroundColor Yellow
+            return $null
+        }
+        return $item.FullName
+    } catch {
+        Write-Host "CodexCommandPath could not be resolved: $CodexCommandPath" -ForegroundColor Yellow
+        return $null
+    }
 }
 
 function Set-CodexEnvironment {
@@ -78,34 +105,6 @@ function Set-CodexEnvironment {
     }
 
     New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
-    $configPath = Join-Path $codexHome 'config.toml'
-    if (!(Test-Path -LiteralPath $configPath)) {
-        New-Item -ItemType File -Path $configPath -Force | Out-Null
-    }
-
-    $configText = Get-Content -LiteralPath $configPath -Raw -ErrorAction SilentlyContinue
-    if ($null -eq $configText) { $configText = '' }
-
-    $trustedProjectBlocks = @()
-    foreach ($path in @($WorkRoot, $WorkRoot.ToLowerInvariant()) | Select-Object -Unique) {
-        $trustedProjectBlocks += @"
-[projects.'$path']
-trust_level = "trusted"
-"@
-    }
-
-    foreach ($block in $trustedProjectBlocks) {
-        $header = ($block -split "`r?`n")[0]
-        if (!$configText.Contains($header)) {
-            if ($configText.Length -gt 0 -and !$configText.EndsWith("`n")) {
-                Add-Content -LiteralPath $configPath -Value '' -Encoding UTF8
-            }
-            Add-Content -LiteralPath $configPath -Value '' -Encoding UTF8
-            Add-Content -LiteralPath $configPath -Value $block -Encoding UTF8
-            $configText = Get-Content -LiteralPath $configPath -Raw -ErrorAction SilentlyContinue
-            if ($null -eq $configText) { $configText = '' }
-        }
-    }
 }
 
 function Get-AlertValue {
@@ -249,7 +248,7 @@ Important paths:
 - Alert disposition helper: $DispositionScript
 
 Disposition command pattern:
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$DispositionScript" -AlertPath "$AlertPath" -Decision Ignored -Reason "<why this alert can be ignored>" -ConfigPath "$ConfigPath"
+powershell.exe -NoProfile -File "$DispositionScript" -AlertPath "$AlertPath" -Decision Ignored -Reason "<why this alert can be ignored>" -ConfigPath "$ConfigPath"
 
 Alert contents:
 $alertText
@@ -260,9 +259,29 @@ Write-AlertPreview -Time $alertTime -Severity $alertSeverity -Title $alertTitle 
 Write-Host 'Launching interactive Codex with the alert context...' -ForegroundColor Cyan
 Write-Host ''
 
+$isElevated = Test-IsElevated
+if ($DisableRemoteCodexAnalysis) {
+    Write-Host 'Remote Codex alert sessions are disabled by config. Showing alert text instead.' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host $alertText
+    Write-Host ''
+    Write-Host 'Leave this window open if you want to review the paths above.'
+    return
+}
+
+if ($isElevated -and !$AllowCodexWhenElevated) {
+    Write-Host 'This alert launcher is running elevated, so Codex will not be started automatically.' -ForegroundColor Yellow
+    Write-Host 'Open a non-elevated PowerShell window and run Codex manually with the alert file if you want interactive analysis.' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host $alertText
+    Write-Host ''
+    Write-Host 'Leave this window open if you want to review the paths above.'
+    return
+}
+
 $codex = Get-CodexCommand
 if (!$codex) {
-    Write-Host 'codex command was not found. Showing alert text instead.' -ForegroundColor Red
+    Write-Host 'CodexCommandPath is not configured or was not found. Showing alert text instead.' -ForegroundColor Red
     Write-Host ''
     Write-Host $alertText
     Write-Host ''

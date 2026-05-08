@@ -6,7 +6,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $testText = "$Marker EncodedCommand DownloadString wevtutil cl vssadmin delete shadows - codex hourly security review test string only"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Write-Output '$testText'"
+$escapedTestText = $testText -replace "'", "''"
+$encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("Write-Output '$escapedTestText'"))
+powershell.exe -NoProfile -EncodedCommand $encodedCommand
 
 Start-Sleep -Seconds 2
 
