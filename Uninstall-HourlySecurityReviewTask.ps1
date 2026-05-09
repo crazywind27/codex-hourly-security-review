@@ -1,5 +1,6 @@
 param(
     [string]$TaskName = 'Codex Hourly Security Review',
+    [string]$WeeklyTaskName = 'Codex Weekly Security Report',
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'config.json')
 )
 
@@ -38,11 +39,13 @@ $Config = Get-ReviewConfig -Path $ConfigPath
 $MonitorRoot = Get-ConfigValue -Config $Config -Name 'MonitorRoot' -Default $PSScriptRoot
 $ActionLog = Get-ConfigValue -Config $Config -Name 'ActionLogPath' -Default (Join-Path $MonitorRoot 'actions-taken.txt')
 
-if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'
-    Add-Content -LiteralPath $ActionLog -Value "[$ts] Uninstalled scheduled task '$TaskName'." -Encoding UTF8
-    "Removed scheduled task '$TaskName'."
-} else {
-    "Scheduled task '$TaskName' was not found."
+foreach ($name in @($TaskName, $WeeklyTaskName)) {
+    if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $name -Confirm:$false
+        $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'
+        Add-Content -LiteralPath $ActionLog -Value "[$ts] Uninstalled scheduled task '$name'." -Encoding UTF8
+        "Removed scheduled task '$name'."
+    } else {
+        "Scheduled task '$name' was not found."
+    }
 }

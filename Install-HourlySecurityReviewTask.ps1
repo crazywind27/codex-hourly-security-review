@@ -1,8 +1,10 @@
 param(
     [string]$TaskName = 'Codex Hourly Security Review',
+    [string]$WeeklyTaskName = 'Codex Weekly Security Report',
     [int]$StartDelayMinutes = 5,
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'config.json'),
-    [switch]$SkipAclCheck
+    [switch]$SkipAclCheck,
+    [switch]$DisableWeeklyReportTask
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,11 +41,18 @@ function Get-ConfigValue {
 $Config = Get-ReviewConfig -Path $ConfigPath
 $MonitorRoot = Get-ConfigValue -Config $Config -Name 'MonitorRoot' -Default $PSScriptRoot
 $MonitorScript = Join-Path $MonitorRoot 'Run-HourlySecurityReview.ps1'
+$WeeklyReportScript = Join-Path $MonitorRoot 'New-WeeklySecurityReport.ps1'
 $ActionLog = Get-ConfigValue -Config $Config -Name 'ActionLogPath' -Default (Join-Path $MonitorRoot 'actions-taken.txt')
 $CodexCommandPath = [string](Get-ConfigValue -Config $Config -Name 'CodexCommandPath' -Default '')
+$WeeklyReportEnabled = [bool](Get-ConfigValue -Config $Config -Name 'WeeklyReportEnabled' -Default $true)
+$WeeklyReportDay = [string](Get-ConfigValue -Config $Config -Name 'WeeklyReportDay' -Default 'Saturday')
+$WeeklyReportTime = [string](Get-ConfigValue -Config $Config -Name 'WeeklyReportTime' -Default '09:00')
 
 if (!(Test-Path -LiteralPath $MonitorScript)) {
     throw "Monitor script not found: $MonitorScript"
+}
+if ($WeeklyReportEnabled -and !$DisableWeeklyReportTask -and !(Test-Path -LiteralPath $WeeklyReportScript)) {
+    throw "Weekly report script not found: $WeeklyReportScript"
 }
 
 function Add-ActionLog {
@@ -92,10 +101,22 @@ function Assert-PathNotBroadlyWritable {
 if (!$SkipAclCheck) {
     Assert-PathNotBroadlyWritable -Path $MonitorRoot
     Assert-PathNotBroadlyWritable -Path $MonitorScript
+    Assert-PathNotBroadlyWritable -Path $WeeklyReportScript
     Assert-PathNotBroadlyWritable -Path $ConfigPath
     if (![string]::IsNullOrWhiteSpace($CodexCommandPath)) {
         Assert-PathNotBroadlyWritable -Path $CodexCommandPath
     }
+}
+
+try {
+    $weeklyDayEnum = [System.Enum]::Parse([System.DayOfWeek], $WeeklyReportDay, $true)
+} catch {
+    throw "WeeklyReportDay must be a day name like Monday, Tuesday, or Saturday. Value: $WeeklyReportDay"
+}
+try {
+    $weeklyAt = [datetime]::ParseExact($WeeklyReportTime, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+} catch {
+    throw "WeeklyReportTime must use 24-hour HH:mm format, for example 09:00 or 18:30. Value: $WeeklyReportTime"
 }
 
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -119,4 +140,21 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Pr
 
 Add-ActionLog "Installed scheduled task '$TaskName' for hourly Codex security/event log review. User=$user; RunLevel=Highest; LogonType=Interactive; routine window hidden; script=$MonitorScript."
 
-Get-ScheduledTask -TaskName $TaskName | Select-Object TaskName, State, Description
+if ($WeeklyReportEnabled -and !$DisableWeeklyReportTask) {
+    $weeklyArguments = "-NoProfile -WindowStyle Hidden -File `"$WeeklyReportScript`" -ConfigPath `"$ConfigPath`""
+    $weeklyAction = New-ScheduledTaskAction -Execute $powershell -Argument $weeklyArguments -WorkingDirectory (Split-Path -Parent $WeeklyReportScript)
+    $weeklyTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weeklyDayEnum -At $weeklyAt
+    $weeklyPrincipal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+    $weeklySettings = New-ScheduledTaskSettingsSet `
+        -StartWhenAvailable `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 15) `
+        -Compatibility Win8
+    $weeklyDescription = 'Generates a local weekly HTML security report and optionally sends a redacted email digest.'
+    Register-ScheduledTask -TaskName $WeeklyTaskName -Action $weeklyAction -Trigger $weeklyTrigger -Principal $weeklyPrincipal -Settings $weeklySettings -Description $weeklyDescription -Force | Out-Null
+    Add-ActionLog "Installed scheduled task '$WeeklyTaskName' for weekly local HTML report. User=$user; RunLevel=Limited; Day=$WeeklyReportDay; Time=$WeeklyReportTime; script=$WeeklyReportScript."
+}
+
+Get-ScheduledTask -TaskName $TaskName, $WeeklyTaskName -ErrorAction SilentlyContinue | Select-Object TaskName, State, Description

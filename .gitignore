@@ -8,6 +8,9 @@ alert-decisions.json
 actions-taken.txt
 last-manual-test-marker.txt
 hourly-security-review-log.md
+reports/
+*weekly-security-report-*.html
+smtp-credential.xml
 
 # Codex and shell output captures
 *-stdout.txt

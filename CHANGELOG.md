@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 - 2026-05-09
+
+- Added `New-WeeklySecurityReport.ps1` for local weekly HTML reports.
+- Added current-vs-previous-period trend summaries for alerts, findings,
+  severity counts, telemetry gaps, missed-run estimates, and event groups.
+- Added optional redacted SMTP email digest support.
+- Updated installer and uninstaller to manage a limited-privilege weekly report
+  scheduled task.
+
 ## 0.2.0 - 2026-05-08
 
 - Added finding fingerprints, suppression keys, per-run `findings.json`, and
