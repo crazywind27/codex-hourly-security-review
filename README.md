@@ -12,18 +12,36 @@ remote analysis and interactive alert triage.
 - Applies deterministic rules for common indicators of compromise, persistence,
   audit tampering, account changes, security-service issues, canary-account
   activity, and recurring system-health trends.
-- Optionally asks `codex exec` for a structured JSON triage decision when an
-  absolute `CodexCommandPath` is configured and the process is not elevated.
+- Optionally asks `codex exec` for a structured JSON triage decision that
+  separates actionable alerts from context-only health and maintenance signals
+  when an absolute `CodexCommandPath` is configured and the process is not
+  elevated.
 - Writes a durable Markdown trend log.
-- Opens a visible alert window when an alert is warranted. If remote Codex
-  analysis is configured and allowed for the current integrity level, the alert
-  window can launch an interactive `codex resume` session.
+- Opens a visible alert window when an alert is warranted and the user likely
+  needs to act or make a decision. If remote Codex analysis is configured and
+  allowed for the current integrity level, the alert window can launch an
+  interactive `codex resume` session.
 - Records alert dispositions and user-approved ignore suppressions so matching
   known-benign findings can be tracked without repeatedly interrupting you.
 - Generates a local weekly HTML report with current-vs-previous-week trends.
 - Optionally sends a redacted weekly email digest that points to the local
   report without including raw event details.
 - Keeps per-run evidence locally under `runs/`.
+
+## Alerting Philosophy
+
+The monitor is intended to behave like an expert filter. It should preserve
+low-grade computer-health and maintenance signals for trend and correlation, but
+it should interrupt the user only for actionable security issues, security
+control failures, material risk changes, or system-health problems that need a
+decision or repair.
+
+Alert titles and summaries should be written in common language. For example,
+use "Broken SysMain performance counter" instead of "Recurring error trend" and
+"Windows Update installer changed startup mode" instead of a raw service-control
+event title. Suppressed or ignored findings still remain available as context;
+they just should not open a visible alert unless new evidence changes the
+assessment.
 
 ## Requirements
 
@@ -253,7 +271,9 @@ That writes `alert-decisions.json`. Future runs still record matching findings
 in `findings.json` and the Markdown log as suppressed, but matching non-critical
 findings no longer force a visible alert. Matching uses the exact fingerprint
 first, then the suppression key so repeated instances of the same alert category
-can be handled even when event counts change. Use `Acknowledged`,
+can be handled even when event counts change. This is appropriate for findings
+that should remain tracked as context but do not need to interrupt unless they
+combine with other evidence or become actionable. Use `Acknowledged`,
 `Investigating`, or `Resolved` when you want an audit trail without suppressing
 future matches.
 

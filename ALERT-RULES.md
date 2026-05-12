@@ -1,12 +1,12 @@
 # Codex Hourly Security Review Alert Rules
 
-Last updated: 2026-05-08
-Alert launcher updated: 2026-05-08
+Last updated: 2026-05-12
+Alert launcher updated: 2026-05-12
 
 These deterministic rules run before Codex analysis. High and critical
 deterministic findings override a Codex non-alert decision. Codex still reviews
-the collected data to decide whether medium/low trends should interrupt the
-owner.
+the collected data to decide whether medium/low trends require user action or
+should remain tracked context.
 
 Findings are assigned stable fingerprints and suppression keys. If the user
 explicitly records an alert disposition with `Decision Ignored`, future matching
@@ -22,6 +22,29 @@ interactive Codex session only when remote Codex analysis is enabled, an
 absolute Codex command path is configured, and the current integrity level is
 allowed. Otherwise the alert window shows the alert text and the manual
 disposition command.
+
+## Alerting Standard
+
+The monitor should act as an expert filter, not a raw event forwarder. Preserve
+weak signals in `findings.json`, the run folder, and the Markdown trend log, but
+open a visible alert only when the user needs to take action, make a security
+decision, or be told about a material risk change.
+
+Use plain-language alert titles and summaries. Prefer titles such as "Broken
+SysMain performance counter" or "Windows Update installer changed startup mode"
+over generic rule names such as "Recurring error trend" or "Windows service
+startup type changed."
+
+Medium and low findings are context by default when they look like normal
+Windows servicing, Microsoft Store/Xbox maintenance, isolated performance
+counter failures, or other benign computer-health noise. They become
+alert-worthy when several weak signals correlate, the same issue worsens,
+security controls are affected, user action is needed, or the event appears
+beside suspicious account, process, service, task, network, or policy evidence.
+
+Suppressed and ignored findings still matter as context. They should not force a
+visible alert by themselves, but they may support an alert if materially new
+unsuppressed evidence changes the risk assessment.
 
 ## Critical Rules
 
@@ -55,12 +78,12 @@ disposition command.
 | Repeated failed logons | Security 4625 | At least 5 failed logons for the same user/source key | Medium |
 | Account lockout | Security 4740 | Any event | Medium |
 | Explicit credential spike | Security 4648 | At least 5 explicit credential events in one run | Medium |
-| New service | Security 4697 or System 7045 | Any new service not matching suspicious path rule | Medium |
-| Service startup type changed | System 7040 | Any non-security service startup type change | Medium |
+| New service | Security 4697 or System 7045 | Any new service not matching suspicious path rule; normal Microsoft servicing may be tracked as context instead of interrupting | Medium |
+| Service startup type changed | System 7040 | Any non-security service startup type change; normal Windows servicing toggles may be tracked as context instead of interrupting | Medium |
 | Scheduled task change | Security 4698-4702 or Task Scheduler Operational 106, 140, 141, 142 | Any task create/update/enable/delete not matching suspicious task rule | Medium |
 | Network share change | Security 5142, 5143, 5144 | Any share added/changed/deleted | Medium |
 | Firewall block burst | Security 5152/5157 | At least 25 Windows Filtering Platform block events in one run | Medium |
-| Recurring error trend | System/Application | Same error fingerprint appears in at least 3 runs or at least 5 total times | Medium |
+| Recurring error trend | System/Application | Same error fingerprint appears in at least 3 runs or at least 5 total times; alert only if recurrence implies action, degradation, or correlation with other suspicious evidence | Medium |
 
 ## Suspicious Command Patterns
 

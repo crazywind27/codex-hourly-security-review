@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.1 - 2026-05-12
+
+- Tightened Codex triage guidance so visible alerts are reserved for user-action
+  security issues, material risk changes, or system-health problems that need a
+  decision or repair.
+- Added plain-language alert naming guidance for future alert titles and
+  interactive summaries.
+- Documented that low-grade maintenance and performance findings should remain
+  tracked as context unless they correlate with other warning signs or become
+  actionable.
+
 ## 0.3.0 - 2026-05-09
 
 - Added `New-WeeklySecurityReport.ps1` for local weekly HTML reports.
