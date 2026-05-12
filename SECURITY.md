@@ -17,6 +17,7 @@ messages, and alert evidence. Leave `CodexCommandPath` empty or set
 - `alert-decisions.json`
 - `actions-taken.txt`
 - Generated alert, prompt, stdout, stderr, and event JSON files
+- Weekly HTML reports and SMTP credential files
 
 ## Reporting Issues
 
@@ -37,3 +38,8 @@ By default, Codex is not launched from an elevated monitor process.
 The scheduled task does not use `ExecutionPolicy Bypass`. New workstations
 should use a script-capable PowerShell policy such as `RemoteSigned`, and script
 files downloaded from ZIP archives should be unblocked before installation.
+
+Weekly email digests are redacted by default and should stay that way. Do not
+email full reports or raw event data unless the destination mailbox and transport
+are approved for host telemetry, local paths, account names, IP addresses, and
+command-line evidence.

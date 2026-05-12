@@ -20,6 +20,9 @@ remote analysis and interactive alert triage.
   window can launch an interactive `codex resume` session.
 - Records alert dispositions and user-approved ignore suppressions so matching
   known-benign findings can be tracked without repeatedly interrupting you.
+- Generates a local weekly HTML report with current-vs-previous-week trends.
+- Optionally sends a redacted weekly email digest that points to the local
+  report without including raw event details.
 - Keeps per-run evidence locally under `runs/`.
 
 ## Requirements
@@ -75,6 +78,14 @@ remote analysis and interactive alert triage.
    - `AllowCodexWhenElevated`: defaults to `false`. Leave it disabled unless you
      have explicitly reviewed the local privilege risk of running Codex from a
      high-integrity scheduled task.
+   - `WeeklyReportEnabled`: defaults to `true`; the installer creates a second
+     limited-privilege task for weekly HTML report generation.
+   - `WeeklyReportDay` and `WeeklyReportTime`: weekly report schedule, for
+     example `Saturday` and `09:00`.
+   - `WeeklyReportRoot`: leave empty to use Documents, or set an absolute
+     report folder.
+   - `EmailDigestEnabled`: defaults to `false`. When enabled, the report script
+     sends a redacted digest through the configured SMTP server.
 
 4. On a new workstation, make sure Windows PowerShell can run local scripts.
    The scheduled task intentionally does not use `ExecutionPolicy Bypass`.
@@ -101,6 +112,10 @@ The task runs hourly as the current interactive user with highest privileges so
 it can read protected Windows logs. Routine task windows are hidden. Alert
 windows are visible. By default, the elevated task does not start Codex; it uses
 deterministic findings and displays alert context instead.
+
+The installer also creates `Codex Weekly Security Report` when
+`WeeklyReportEnabled` is true. That task runs at limited privilege and generates
+a local HTML report from the existing `runs/` data.
 
 ## Upgrade
 
@@ -147,6 +162,8 @@ powershell.exe -NoProfile -File .\Uninstall-HourlySecurityReviewTask.ps1
 - `Uninstall-HourlySecurityReviewTask.ps1`: removes the scheduled task.
 - `Set-CodexAlertDisposition.ps1`: records alert decisions and ignored-finding
   suppressions.
+- `New-WeeklySecurityReport.ps1`: aggregates run summaries, findings, and event
+  groups into a local weekly HTML report and optional redacted email digest.
 - `Test-Alert.ps1`: harmless manual alert test.
 - `ALERT-RULES.md`: deterministic rule inventory.
 - `codex-security-review.schema.json`: JSON schema for Codex analysis output.
@@ -165,6 +182,59 @@ addresses, local paths, command lines, process names, service names, scheduled
 task names/content, event messages, and alert evidence. Set
 `DisableRemoteCodexAnalysis` to `true` or leave `CodexCommandPath` empty for
 deterministic-only local analysis.
+
+Weekly HTML reports are local files and may include finding titles, event group
+metadata, host labels, local report paths, and run folder paths. Email digests
+are intentionally redacted: they include status, counts, telemetry-gap totals,
+and the local report path, but not raw commands, usernames, IP addresses, or
+event messages.
+
+## Weekly Reports
+
+Run a report manually:
+
+```powershell
+powershell.exe -NoProfile -File .\New-WeeklySecurityReport.ps1
+```
+
+By default, reports are written under:
+
+```text
+Documents\Codex Hourly Security Review\reports\
+```
+
+The report compares the latest lookback window, normally seven days, with the
+previous window. It trends:
+
+- hourly runs observed and estimated missed runs
+- alerts and highest severity
+- active and suppressed findings
+- new and resolved finding fingerprints
+- severity counts
+- telemetry gaps
+- top event log/provider/event ID groups
+
+To enable a redacted email digest, configure SMTP settings in `config.json`:
+
+```json
+{
+  "EmailDigestEnabled": true,
+  "EmailSmtpServer": "smtp.example.com",
+  "EmailSmtpPort": 587,
+  "EmailUseSsl": true,
+  "EmailFrom": "security-review@example.com",
+  "EmailTo": "you@example.com"
+}
+```
+
+If your SMTP server requires credentials, create a machine-local encrypted
+credential file for the same Windows account that runs the weekly task:
+
+```powershell
+Get-Credential | Export-Clixml "$env:USERPROFILE\Documents\Codex Hourly Security Review\smtp-credential.xml"
+```
+
+Then set `EmailCredentialPath` to that file. Do not commit the credential file.
 
 ## Alert Dispositions
 
