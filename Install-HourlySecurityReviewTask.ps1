@@ -42,6 +42,8 @@ $Config = Get-ReviewConfig -Path $ConfigPath
 $MonitorRoot = Get-ConfigValue -Config $Config -Name 'MonitorRoot' -Default $PSScriptRoot
 $MonitorScript = Join-Path $MonitorRoot 'Run-HourlySecurityReview.ps1'
 $WeeklyReportScript = Join-Path $MonitorRoot 'New-WeeklySecurityReport.ps1'
+$HiddenLauncher = Join-Path $MonitorRoot 'Start-HourlySecurityReviewHidden.vbs'
+$WeeklyHiddenLauncher = Join-Path $MonitorRoot 'Start-WeeklySecurityReportHidden.vbs'
 $ActionLog = Get-ConfigValue -Config $Config -Name 'ActionLogPath' -Default (Join-Path $MonitorRoot 'actions-taken.txt')
 $CodexCommandPath = [string](Get-ConfigValue -Config $Config -Name 'CodexCommandPath' -Default '')
 $WeeklyReportEnabled = [bool](Get-ConfigValue -Config $Config -Name 'WeeklyReportEnabled' -Default $true)
@@ -51,8 +53,14 @@ $WeeklyReportTime = [string](Get-ConfigValue -Config $Config -Name 'WeeklyReport
 if (!(Test-Path -LiteralPath $MonitorScript)) {
     throw "Monitor script not found: $MonitorScript"
 }
+if (!(Test-Path -LiteralPath $HiddenLauncher)) {
+    throw "Hidden launcher not found: $HiddenLauncher"
+}
 if ($WeeklyReportEnabled -and !$DisableWeeklyReportTask -and !(Test-Path -LiteralPath $WeeklyReportScript)) {
     throw "Weekly report script not found: $WeeklyReportScript"
+}
+if ($WeeklyReportEnabled -and !$DisableWeeklyReportTask -and !(Test-Path -LiteralPath $WeeklyHiddenLauncher)) {
+    throw "Weekly report hidden launcher not found: $WeeklyHiddenLauncher"
 }
 
 function Add-ActionLog {
@@ -141,6 +149,8 @@ if (!$SkipAclCheck) {
     Assert-PathNotBroadlyWritable -Path $MonitorRoot
     Assert-PathNotBroadlyWritable -Path $MonitorScript
     Assert-PathNotBroadlyWritable -Path $WeeklyReportScript
+    Assert-PathNotBroadlyWritable -Path $HiddenLauncher
+    Assert-PathNotBroadlyWritable -Path $WeeklyHiddenLauncher
     Assert-PathNotBroadlyWritable -Path $ConfigPath
     if (![string]::IsNullOrWhiteSpace($CodexCommandPath)) {
         Assert-PathNotBroadlyWritable -Path $CodexCommandPath
@@ -159,10 +169,10 @@ try {
 }
 
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$arguments = "-NoProfile -WindowStyle Hidden -File `"$MonitorScript`" -ConfigPath `"$ConfigPath`""
+$wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+$arguments = "//B `"$HiddenLauncher`" `"$ConfigPath`""
 
-$action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments -WorkingDirectory (Split-Path -Parent $MonitorScript)
+$action = New-ScheduledTaskAction -Execute $wscript -Argument $arguments -WorkingDirectory (Split-Path -Parent $MonitorScript)
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes($StartDelayMinutes) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet `
@@ -177,11 +187,11 @@ $description = 'Reviews Windows event logs hourly, appends a running Markdown lo
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description $description -Force | Out-Null
 
-Add-ActionLog "Installed scheduled task '$TaskName' for hourly Codex security/event log review. User=$user; RunLevel=Highest; LogonType=Interactive; routine window hidden; script=$MonitorScript."
+Add-ActionLog "Installed scheduled task '$TaskName' for hourly Codex security/event log review. User=$user; RunLevel=Highest; LogonType=Interactive; non-disruptive hidden launcher=$HiddenLauncher; script=$MonitorScript."
 
 if ($WeeklyReportEnabled -and !$DisableWeeklyReportTask) {
-    $weeklyArguments = "-NoProfile -WindowStyle Hidden -File `"$WeeklyReportScript`" -ConfigPath `"$ConfigPath`""
-    $weeklyAction = New-ScheduledTaskAction -Execute $powershell -Argument $weeklyArguments -WorkingDirectory (Split-Path -Parent $WeeklyReportScript)
+    $weeklyArguments = "//B `"$WeeklyHiddenLauncher`" `"$ConfigPath`""
+    $weeklyAction = New-ScheduledTaskAction -Execute $wscript -Argument $weeklyArguments -WorkingDirectory (Split-Path -Parent $WeeklyReportScript)
     $weeklyTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weeklyDayEnum -At $weeklyAt
     $weeklyPrincipal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
     $weeklySettings = New-ScheduledTaskSettingsSet `
@@ -193,7 +203,7 @@ if ($WeeklyReportEnabled -and !$DisableWeeklyReportTask) {
         -Compatibility Win8
     $weeklyDescription = 'Generates a local weekly HTML security report and optionally sends a redacted email digest.'
     Register-ScheduledTask -TaskName $WeeklyTaskName -Action $weeklyAction -Trigger $weeklyTrigger -Principal $weeklyPrincipal -Settings $weeklySettings -Description $weeklyDescription -Force | Out-Null
-    Add-ActionLog "Installed scheduled task '$WeeklyTaskName' for weekly local HTML report. User=$user; RunLevel=Limited; Day=$WeeklyReportDay; Time=$WeeklyReportTime; script=$WeeklyReportScript."
+    Add-ActionLog "Installed scheduled task '$WeeklyTaskName' for weekly local HTML report. User=$user; RunLevel=Limited; Day=$WeeklyReportDay; Time=$WeeklyReportTime; non-disruptive hidden launcher=$WeeklyHiddenLauncher; script=$WeeklyReportScript."
 }
 
 Get-ScheduledTask -TaskName $TaskName, $WeeklyTaskName -ErrorAction SilentlyContinue | Select-Object TaskName, State, Description
